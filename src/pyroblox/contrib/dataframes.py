@@ -6,7 +6,8 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from pyroblox.contrib.edgelists import friend_edgelist, group_edgelist
+from pyroblox.contrib.edgelists import group_edgelist
+from pyroblox.exceptions import PyRobloxError
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -70,7 +71,7 @@ def build_network_dataframes(
         try:
             info = client.groups.get_info(gid)
             group_rows.append(info.model_dump())
-        except Exception:
+        except PyRobloxError:
             logger.warning("Failed to get info for group %d", gid)
     result["group_info"] = pd.DataFrame(group_rows)
 
@@ -93,13 +94,13 @@ def build_network_dataframes(
             users = client.users.get_batch(batch)
             for u in users:
                 user_rows.append(u.model_dump())
-        except Exception:
+        except PyRobloxError:
             logger.warning("Failed to batch-fetch users, falling back to individual")
             for uid in batch:
                 try:
                     u = client.users.get_info(uid)
                     user_rows.append(u.model_dump())
-                except Exception:
+                except PyRobloxError:
                     logger.warning("Failed to get info for user %d", uid)
     result["user_info"] = pd.DataFrame(user_rows)
 
@@ -113,7 +114,7 @@ def build_network_dataframes(
                 fav_edges.append((uid, game.id))
                 if game.id not in game_info:
                     game_info[game.id] = game.model_dump()
-        except Exception:
+        except PyRobloxError:
             logger.warning("Failed to get favorites for user %d", uid)
     result["favorites"] = pd.DataFrame(fav_edges, columns=["User", "FavoritedGame"])
     result["game_info"] = pd.DataFrame(list(game_info.values()))

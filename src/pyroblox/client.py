@@ -5,9 +5,20 @@ from __future__ import annotations
 import logging
 import random
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
+
+if TYPE_CHECKING:
+    from pyroblox.api.avatar import AvatarAPI
+    from pyroblox.api.badges import BadgesAPI
+    from pyroblox.api.catalog import CatalogAPI
+    from pyroblox.api.friends import FriendsAPI
+    from pyroblox.api.games import GamesAPI
+    from pyroblox.api.groups import GroupsAPI
+    from pyroblox.api.inventory import InventoryAPI
+    from pyroblox.api.thumbnails import ThumbnailsAPI
+    from pyroblox.api.users import UsersAPI
 
 from pyroblox.exceptions import (
     AuthenticationError,
@@ -27,6 +38,9 @@ DEFAULT_BASE_URLS: dict[str, str] = {
     "inventory": "https://inventory.roblox.com",
     "thumbnails": "https://thumbnails.roblox.com",
     "presence": "https://presence.roblox.com",
+    "badges": "https://badges.roblox.com",
+    "catalog": "https://catalog.roblox.com",
+    "avatar": "https://avatar.roblox.com",
 }
 
 
@@ -75,6 +89,11 @@ class RobloxClient:
         self._users_api: UsersAPI | None = None
         self._friends_api: FriendsAPI | None = None
         self._games_api: GamesAPI | None = None
+        self._badges_api: BadgesAPI | None = None
+        self._inventory_api: InventoryAPI | None = None
+        self._catalog_api: CatalogAPI | None = None
+        self._avatar_api: AvatarAPI | None = None
+        self._thumbnails_api: ThumbnailsAPI | None = None
 
     def __enter__(self) -> RobloxClient:
         return self
@@ -86,7 +105,9 @@ class RobloxClient:
         """Close the underlying HTTP client."""
         self._http.close()
 
-    def request(self, method: str, domain: str, path: str, **kwargs: Any) -> httpx.Response:
+    def request(
+        self, method: str, domain: str, path: str, **kwargs: Any
+    ) -> httpx.Response:
         """Make an API request with automatic rate-limit handling and retry.
 
         Args:
@@ -112,7 +133,10 @@ class RobloxClient:
             except httpx.TransportError as exc:
                 if attempt < self._max_retries:
                     delay = self._exponential_delay(attempt)
-                    logger.warning("Transport error on %s (attempt %d), retrying in %.1fs: %s", url, attempt + 1, delay, exc)
+                    logger.warning(
+                        "Transport error on %s (attempt %d), retrying in %.1fs: %s",
+                        url, attempt + 1, delay, exc,
+                    )
                     time.sleep(delay)
                     continue
                 raise RobloxAPIError(0, [{"message": str(exc)}], url) from exc
@@ -125,8 +149,14 @@ class RobloxClient:
             if response.status_code == 429:
                 retry_after = self._parse_retry_after(response)
                 if attempt < self._max_retries:
-                    delay = retry_after or self._exponential_delay(attempt)
-                    logger.warning("Rate limited on %s (attempt %d), retrying in %.1fs", url, attempt + 1, delay)
+                    if retry_after:
+                        delay = min(retry_after, self._max_delay)
+                    else:
+                        delay = self._exponential_delay(attempt)
+                    logger.warning(
+                        "Rate limited on %s (attempt %d), retrying in %.1fs",
+                        url, attempt + 1, delay,
+                    )
                     time.sleep(delay)
                     continue
                 raise RateLimitError(errors, url, retry_after)
@@ -137,12 +167,14 @@ class RobloxClient:
             if response.status_code == 404:
                 raise NotFoundError(404, errors, url)
 
-            if response.status_code >= 500:
-                if attempt < self._max_retries:
-                    delay = self._exponential_delay(attempt)
-                    logger.warning("Server error %d on %s (attempt %d), retrying in %.1fs", response.status_code, url, attempt + 1, delay)
-                    time.sleep(delay)
-                    continue
+            if response.status_code >= 500 and attempt < self._max_retries:
+                delay = self._exponential_delay(attempt)
+                logger.warning(
+                    "Server error %d on %s (attempt %d), retrying in %.1fs",
+                    response.status_code, url, attempt + 1, delay,
+                )
+                time.sleep(delay)
+                continue
 
             raise RobloxAPIError(response.status_code, errors, url)
 
@@ -214,12 +246,42 @@ class RobloxClient:
             self._games_api = GamesAPI(self)
         return self._games_api
 
+    @property
+    def badges(self) -> BadgesAPI:
+        if self._badges_api is None:
+            from pyroblox.api.badges import BadgesAPI
 
-# Type imports for annotations only
-from typing import TYPE_CHECKING
+            self._badges_api = BadgesAPI(self)
+        return self._badges_api
 
-if TYPE_CHECKING:
-    from pyroblox.api.friends import FriendsAPI
-    from pyroblox.api.games import GamesAPI
-    from pyroblox.api.groups import GroupsAPI
-    from pyroblox.api.users import UsersAPI
+    @property
+    def inventory(self) -> InventoryAPI:
+        if self._inventory_api is None:
+            from pyroblox.api.inventory import InventoryAPI
+
+            self._inventory_api = InventoryAPI(self)
+        return self._inventory_api
+
+    @property
+    def catalog(self) -> CatalogAPI:
+        if self._catalog_api is None:
+            from pyroblox.api.catalog import CatalogAPI
+
+            self._catalog_api = CatalogAPI(self)
+        return self._catalog_api
+
+    @property
+    def avatar(self) -> AvatarAPI:
+        if self._avatar_api is None:
+            from pyroblox.api.avatar import AvatarAPI
+
+            self._avatar_api = AvatarAPI(self)
+        return self._avatar_api
+
+    @property
+    def thumbnails(self) -> ThumbnailsAPI:
+        if self._thumbnails_api is None:
+            from pyroblox.api.thumbnails import ThumbnailsAPI
+
+            self._thumbnails_api = ThumbnailsAPI(self)
+        return self._thumbnails_api

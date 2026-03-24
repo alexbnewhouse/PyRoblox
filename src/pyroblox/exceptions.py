@@ -10,7 +10,9 @@ class PyRobloxError(Exception):
 class RobloxAPIError(PyRobloxError):
     """Raised when the Roblox API returns an error response."""
 
-    def __init__(self, status_code: int, errors: list[dict[str, object]], url: str) -> None:
+    def __init__(
+        self, status_code: int, errors: list[dict[str, object]], url: str
+    ) -> None:
         self.status_code = status_code
         self.errors = errors
         self.url = url

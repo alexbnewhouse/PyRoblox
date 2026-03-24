@@ -4,9 +4,15 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
-from typing import Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
+
+from pydantic import BaseModel
+
+if TYPE_CHECKING:
+    from pyroblox.client import RobloxClient
 
 T = TypeVar("T")
+M = TypeVar("M", bound=BaseModel)
 
 
 @dataclass
@@ -46,3 +52,47 @@ def paginate(
         if max_pages is not None and pages_fetched >= max_pages:
             break
         cursor = page.next_page_cursor
+
+
+def paginate_endpoint(
+    client: RobloxClient,
+    domain: str,
+    path: str,
+    model: type[M],
+    *,
+    limit: int = 100,
+    max_pages: int | None = None,
+    extra_params: dict[str, Any] | None = None,
+    cursor_param: str = "cursor",
+    next_cursor_key: str = "nextPageCursor",
+    data_key: str = "data",
+) -> Iterator[M]:
+    """Shared pagination helper for standard Roblox cursor-paginated endpoints.
+
+    Args:
+        client: The RobloxClient instance.
+        domain: API domain key (e.g. "groups", "badges").
+        path: URL path.
+        model: Pydantic model class to validate each item.
+        limit: Items per page.
+        max_pages: Safety limit on total pages fetched.
+        extra_params: Additional query parameters merged into each request.
+        cursor_param: Query parameter name for the cursor.
+        next_cursor_key: JSON key for the next page cursor in responses.
+        data_key: JSON key for the items array in responses.
+    """
+    def fetch_page(cursor: str | None) -> CursorPage[M]:
+        params: dict[str, Any] = {"limit": limit}
+        if extra_params:
+            params.update(extra_params)
+        if cursor:
+            params[cursor_param] = cursor
+        resp = client.get(domain, path, params=params)
+        raw = resp.json()
+        return CursorPage(
+            data=[model.model_validate(item) for item in raw.get(data_key, [])],
+            next_page_cursor=raw.get(next_cursor_key),
+            previous_page_cursor=raw.get("previousPageCursor"),
+        )
+
+    return paginate(fetch_page, max_pages=max_pages)

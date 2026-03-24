@@ -27,3 +27,18 @@ class Game(RobloxModel):
     playing: int | None = None
     max_players: int | None = None
     genre: str | None = None
+
+
+class GameVotes(RobloxModel):
+    id: int
+    up_votes: int = 0
+    down_votes: int = 0
+
+
+class GameServer(RobloxModel):
+    id: str | None = None
+    max_players: int | None = None
+    playing: int | None = None
+    player_tokens: list[str] | None = None
+    fps: float | None = None
+    ping: int | None = None

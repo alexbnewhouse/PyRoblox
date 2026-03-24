@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from pyroblox.exceptions import PyRobloxError
+
 if TYPE_CHECKING:
     from pyroblox.client import RobloxClient
 
@@ -54,7 +56,7 @@ def group_edgelist(
                 hop_allies = client.groups.get_allies(aid)
                 for group in hop_allies:
                     ally_edges.append((aid, group.id))
-            except Exception:
+            except PyRobloxError:
                 logger.warning("Failed to fetch allies for group %d, skipping", aid)
 
         for eid in enemy_ids:
@@ -62,7 +64,7 @@ def group_edgelist(
                 hop_enemies = client.groups.get_enemies(eid)
                 for group in hop_enemies:
                     enemy_edges.append((eid, group.id))
-            except Exception:
+            except PyRobloxError:
                 logger.warning("Failed to fetch enemies for group %d, skipping", eid)
 
     return {"allies": ally_edges, "enemies": enemy_edges}
@@ -100,7 +102,7 @@ def friend_edgelist(
                 hop_friends = client.friends.get_friends(fid)
                 for friend in hop_friends:
                     edges.append((fid, friend.id))
-            except Exception:
+            except PyRobloxError:
                 logger.warning("Failed to fetch friends for user %d, skipping", fid)
 
     return edges

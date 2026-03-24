@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 from pyroblox import _endpoints as ep
 from pyroblox.models.groups import Group, GroupMember, GroupRole, SocialLink
-from pyroblox.pagination import CursorPage, paginate
+from pyroblox.pagination import paginate_endpoint
 
 if TYPE_CHECKING:
     from pyroblox.client import RobloxClient
@@ -55,20 +55,12 @@ class GroupsAPI:
             limit: Members per page (max 100).
             max_pages: Safety limit on total pages fetched.
         """
-        def fetch_page(cursor: str | None) -> CursorPage[GroupMember]:
-            path = ep.GROUP_MEMBERS.format(group_id=group_id)
-            params: dict[str, str | int] = {"sortOrder": "Asc", "limit": limit}
-            if cursor:
-                params["cursor"] = cursor
-            resp = self._client.get("groups", path, params=params)
-            raw = resp.json()
-            return CursorPage(
-                data=[GroupMember.model_validate(m) for m in raw.get("data", [])],
-                next_page_cursor=raw.get("nextPageCursor"),
-                previous_page_cursor=raw.get("previousPageCursor"),
-            )
-
-        return paginate(fetch_page, max_pages=max_pages)
+        path = ep.GROUP_MEMBERS.format(group_id=group_id)
+        return paginate_endpoint(
+            self._client, "groups", path, GroupMember,
+            limit=limit, max_pages=max_pages,
+            extra_params={"sortOrder": "Asc"},
+        )
 
     def get_roles(self, group_id: int) -> list[GroupRole]:
         """Get all roles in a group."""
