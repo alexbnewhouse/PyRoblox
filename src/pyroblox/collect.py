@@ -1,6 +1,6 @@
 """High-level collectors: everything about one user, group, or game in one call.
 
-Each collector returns a :class:`~robloxwrapper.export.Snapshot` whose tables can
+Each collector returns a :class:`~pyroblox.export.Snapshot` whose tables can
 be saved as CSV files with ``snapshot.save("some_folder")``. Collection is
 best-effort: the primary lookup (the user, group, or game itself) must succeed,
 but every secondary table that Roblox refuses (private, cookie-only, deleted)
@@ -37,8 +37,9 @@ from .errors import (
     ServerError,
 )
 from .export import Snapshot
+from .models.base import to_record, to_records
 
-log = logging.getLogger("robloxwrapper.collect")
+log = logging.getLogger("pyroblox.collect")
 
 ProgressFn = Callable[[str], None]
 
@@ -63,6 +64,15 @@ _OMITTED = object()
 
 # -- helpers --------------------------------------------------------------------
 
+def _plain(value: Any) -> Any:
+    """Turn API results (models, lists of models, PagedList of models) into plain
+    dicts so the collectors can work with Roblox's own key names. A PagedList
+    keeps its ``truncated`` flag."""
+    if isinstance(value, PagedList):
+        return PagedList(to_records(value), value.truncated)
+    return to_record(value)
+
+
 def _say(progress: Optional[ProgressFn], message: str) -> None:
     if progress:
         progress(message)
@@ -83,7 +93,7 @@ def _select(all_tables: Sequence[str], include: Optional[Iterable[str]],
 def _primary(entity: str, fn: Callable[..., Any], *args: Any) -> Any:
     """Run the primary lookup; translate failures into :class:`EntityUnavailable`."""
     try:
-        return fn(*args)
+        return _plain(fn(*args))
     except NotFoundError as e:
         raise EntityUnavailable("not-found", f"{entity} does not exist or was deleted") from e
     except PrivateError as e:
@@ -98,7 +108,7 @@ def _attempt(snapshot: Snapshot, name: str, fn: Callable[..., Any], *args: Any,
     """Run a secondary lookup. 4xx outcomes are recorded as omissions and return
     the ``_OMITTED`` sentinel; rate-limit and server errors propagate."""
     try:
-        return fn(*args, **kwargs)
+        return _plain(fn(*args, **kwargs))
     except (RateLimitedError, ServerError):
         raise
     except AuthRequiredError:
@@ -133,7 +143,7 @@ def _hydrate_names(client: RobloxClient, records: List[dict],
                if isinstance(r, dict) and r.get(id_key) is not None and not r.get("name")]
     if not missing:
         return records
-    lookup = {u["id"]: u for u in client.users.batch_get(missing)}
+    lookup = {u["id"]: u for u in to_records(client.users.get_batch(missing))}
     out = []
     for r in records:
         info = lookup.get(r.get(id_key)) if isinstance(r, dict) else None
@@ -169,50 +179,50 @@ def user_snapshot(client: RobloxClient, user_id: int, *,
     tables = _select(USER_TABLES, include, exclude)
     snap = Snapshot("user", user_id)
     _say(progress, f"user {user_id}: profile")
-    profile = _primary(f"user {user_id}", client.users.get, user_id)
+    profile = _primary(f"user {user_id}", client.users.get_info, user_id)
     snap.add("profile", profile)
 
     if "counts" in tables:
         _say(progress, f"user {user_id}: friend/follower counts")
-        _add(snap, "counts", _attempt(snap, "counts", client.friends.counts, user_id))
+        _add(snap, "counts", _attempt(snap, "counts", client.friends.get_counts, user_id))
     if "friends" in tables:
         _say(progress, f"user {user_id}: friends")
-        friends = _attempt(snap, "friends", client.friends.friends, user_id)
+        friends = _attempt(snap, "friends", client.friends.get_friends, user_id)
         if friends is not _OMITTED and hydrate_names:
             friends = _attempt(snap, "friends", _hydrate_names, client, friends)
         _add(snap, "friends", friends)
     if "followers" in tables:
         _say(progress, f"user {user_id}: followers")
-        _add(snap, "followers", _attempt(snap, "followers", client.friends.followers,
+        _add(snap, "followers", _attempt(snap, "followers", client.friends.get_followers,
                                          user_id, max_items=max_items))
     if "followings" in tables:
         _say(progress, f"user {user_id}: followings")
-        _add(snap, "followings", _attempt(snap, "followings", client.friends.followings,
+        _add(snap, "followings", _attempt(snap, "followings", client.friends.get_followings,
                                           user_id, max_items=max_items))
     if "groups" in tables:
         _say(progress, f"user {user_id}: groups")
-        _add(snap, "groups", _attempt(snap, "groups", client.groups.user_groups, user_id))
+        _add(snap, "groups", _attempt(snap, "groups", client.groups.get_user_groups, user_id))
     if "games" in tables:
         _say(progress, f"user {user_id}: created games")
-        _add(snap, "games", _attempt(snap, "games", client.games.user_games,
+        _add(snap, "games", _attempt(snap, "games", client.games.get_user_games,
                                      user_id, max_items=max_items))
     if "favorite_games" in tables:
         _say(progress, f"user {user_id}: favorite games")
         _add(snap, "favorite_games", _attempt(snap, "favorite_games",
-                                              client.games.user_favorites,
+                                              client.games.get_user_favorites,
                                               user_id, max_items=max_items))
     if "badges" in tables:
         _say(progress, f"user {user_id}: badges")
-        _add(snap, "badges", _attempt(snap, "badges", client.badges.user_badges,
+        _add(snap, "badges", _attempt(snap, "badges", client.badges.get_user_badges,
                                       user_id, max_items=max_items))
     if "username_history" in tables:
         _say(progress, f"user {user_id}: username history")
         _add(snap, "username_history", _attempt(snap, "username_history",
-                                                client.users.username_history,
+                                                client.users.get_username_history,
                                                 user_id, max_items=max_items))
     if "avatar" in tables:
         _say(progress, f"user {user_id}: avatar")
-        avatar = _attempt(snap, "avatar", client.avatar.get, user_id)
+        avatar = _attempt(snap, "avatar", client.avatar.get_avatar, user_id)
         if avatar is not _OMITTED:
             assets = avatar.get("assets") or []
             snap.add("avatar", {k: v for k, v in avatar.items() if k != "assets"})
@@ -220,23 +230,23 @@ def user_snapshot(client: RobloxClient, user_id: int, *,
     if "collectibles" in tables:
         _say(progress, f"user {user_id}: collectibles")
         _add(snap, "collectibles", _attempt(snap, "collectibles",
-                                            client.inventory.collectibles,
+                                            client.inventory.get_collectibles,
                                             user_id, max_items=max_items))
     if "roblox_badges" in tables:
         _say(progress, f"user {user_id}: Roblox badges")
         _add(snap, "roblox_badges", _attempt(snap, "roblox_badges",
-                                             client.account.roblox_badges, user_id))
+                                             client.account.get_roblox_badges, user_id))
     if "promotion_channels" in tables:
         _say(progress, f"user {user_id}: promotion channels")
         channels = _attempt(snap, "promotion_channels",
-                            client.account.promotion_channels, user_id)
+                            client.account.get_promotion_channels, user_id)
         if channels is not _OMITTED:
             if not client.has_cookie and not any(channels.values()):
                 snap.omit("promotion_channels", "cookie-required")
             snap.add("promotion_channels", channels)
     if "presence" in tables:
         _say(progress, f"user {user_id}: presence")
-        _add(snap, "presence", _attempt(snap, "presence", client.presence.get, [user_id]))
+        _add(snap, "presence", _attempt(snap, "presence", client.presence.get_presence, [user_id]))
     return snap
 
 
@@ -254,37 +264,37 @@ def group_snapshot(client: RobloxClient, group_id: int, *,
     tables = _select(GROUP_TABLES, include, exclude)
     snap = Snapshot("group", group_id)
     _say(progress, f"group {group_id}: profile")
-    profile = _primary(f"group {group_id}", client.groups.get, group_id)
+    profile = _primary(f"group {group_id}", client.groups.get_info, group_id)
     snap.add("profile", profile)
 
     if "roles" in tables:
         _say(progress, f"group {group_id}: roles")
-        _add(snap, "roles", _attempt(snap, "roles", client.groups.roles, group_id))
+        _add(snap, "roles", _attempt(snap, "roles", client.groups.get_roles, group_id))
     if "members" in tables:
         _say(progress, f"group {group_id}: members ({profile.get('memberCount', '?')} total)")
-        _add(snap, "members", _attempt(snap, "members", client.groups.members,
+        _add(snap, "members", _attempt(snap, "members", client.groups.get_members,
                                        group_id, max_items=max_items))
     if "allies" in tables:
         _say(progress, f"group {group_id}: allies")
-        _add(snap, "allies", _attempt(snap, "allies", client.groups.allies,
+        _add(snap, "allies", _attempt(snap, "allies", client.groups.get_allies,
                                       group_id, max_items=max_items))
     if "enemies" in tables:
         _say(progress, f"group {group_id}: enemies")
-        _add(snap, "enemies", _attempt(snap, "enemies", client.groups.enemies,
+        _add(snap, "enemies", _attempt(snap, "enemies", client.groups.get_enemies,
                                        group_id, max_items=max_items))
     if "games" in tables:
         _say(progress, f"group {group_id}: games")
-        _add(snap, "games", _attempt(snap, "games", client.games.group_games,
+        _add(snap, "games", _attempt(snap, "games", client.games.get_group_games,
                                      group_id, max_items=max_items))
     if "name_history" in tables:
         _say(progress, f"group {group_id}: name history")
         _add(snap, "name_history", _attempt(snap, "name_history",
-                                            client.groups.name_history,
+                                            client.groups.get_name_history,
                                             group_id, max_items=max_items))
     if "social_links" in tables:
         _say(progress, f"group {group_id}: social links")
         _add(snap, "social_links", _attempt(snap, "social_links",
-                                            client.groups.social_links, group_id))
+                                            client.groups.get_social_links, group_id))
     return snap
 
 
@@ -305,12 +315,12 @@ def game_snapshot(client: RobloxClient, game_id: int, *, by_place: bool = False,
     tables = _select(GAME_TABLES, include, exclude)
     if by_place:
         _say(progress, f"place {game_id}: resolving universe")
-        universe_id = _primary(f"place {game_id}", client.games.place_to_universe, game_id)
+        universe_id = _primary(f"place {game_id}", client.games.get_universe_id, game_id)
     else:
         universe_id = game_id
     snap = Snapshot("game", universe_id)
     _say(progress, f"game {universe_id}: profile")
-    profile = _primary(f"game {universe_id}", client.games.get, universe_id)
+    profile = _primary(f"game {universe_id}", client.games.get_info, universe_id)
     snap.add("profile", profile)
     root_place = profile.get("rootPlaceId")
     snap.meta["root_place_id"] = root_place
@@ -319,35 +329,35 @@ def game_snapshot(client: RobloxClient, game_id: int, *, by_place: bool = False,
 
     if "votes" in tables:
         _say(progress, f"game {universe_id}: votes")
-        votes = _attempt(snap, "votes", client.games.votes, universe_id)
+        votes = _attempt(snap, "votes", client.games.get_votes, universe_id)
         if votes is not _OMITTED:
             votes = dict(votes)
-            fav = _attempt(snap, "votes", client.games.favorites_count, universe_id)
+            fav = _attempt(snap, "votes", client.games.get_favorites_count, universe_id)
             if fav is not _OMITTED:
                 votes["favoritesCount"] = fav
             snap.add("votes", votes)
     if "places" in tables:
         _say(progress, f"game {universe_id}: places")
-        _add(snap, "places", _attempt(snap, "places", client.games.places,
+        _add(snap, "places", _attempt(snap, "places", client.games.get_places,
                                       universe_id, max_items=max_items))
     if "servers" in tables:
         if root_place is None:
             snap.omit("servers", "no-root-place")
         else:
             _say(progress, f"game {universe_id}: public servers")
-            _add(snap, "servers", _attempt(snap, "servers", client.games.servers,
+            _add(snap, "servers", _attempt(snap, "servers", client.games.get_servers,
                                            root_place, max_items=max_servers))
     if "badges" in tables:
         _say(progress, f"game {universe_id}: badges")
-        _add(snap, "badges", _attempt(snap, "badges", client.badges.universe_badges,
+        _add(snap, "badges", _attempt(snap, "badges", client.badges.get_universe_badges,
                                       universe_id, max_items=max_items))
     if "media" in tables:
         _say(progress, f"game {universe_id}: media")
-        _add(snap, "media", _attempt(snap, "media", client.games.media, universe_id))
+        _add(snap, "media", _attempt(snap, "media", client.games.get_media, universe_id))
     if "game_passes" in tables:
         _say(progress, f"game {universe_id}: game passes")
         _add(snap, "game_passes", _attempt(snap, "game_passes",
-                                           client.games.game_passes, universe_id))
+                                           client.games.get_game_passes, universe_id))
     return snap
 
 
@@ -389,7 +399,7 @@ def friend_network(client: RobloxClient, user_id: int, *, depth: int = 1,
             _say(progress, f"friend network: hop {hop + 1}, user {uid} "
                            f"({fetched + 1} lists fetched)")
             try:
-                friends = client.friends.friends(uid)
+                friends = to_records(client.friends.get_friends(uid))
             except (RateLimitedError, ServerError):
                 raise
             except RobloxError as e:
@@ -454,14 +464,14 @@ def group_network(client: RobloxClient, group_id: int, *,
     snap = Snapshot("group_network", group_id)
     snap.meta["failed"] = {}
     _say(progress, f"group network: seed group {group_id}")
-    seed = _primary(f"group {group_id}", client.groups.get, group_id)
+    seed = _primary(f"group {group_id}", client.groups.get_info, group_id)
     groups: Dict[int, dict] = {group_id: seed}
     ally_edges: Set[Tuple[int, int]] = set()
     enemy_edges: Set[Tuple[int, int]] = set()
 
     def relationships(gid: int) -> Tuple[List[dict], List[dict]]:
-        allies = _attempt(snap, "allies", client.groups.allies, gid)
-        enemies = _attempt(snap, "enemies", client.groups.enemies, gid)
+        allies = _attempt(snap, "allies", client.groups.get_allies, gid)
+        enemies = _attempt(snap, "enemies", client.groups.get_enemies, gid)
         if allies is _OMITTED or enemies is _OMITTED:
             snap.meta["failed"][gid] = "relationships unavailable (locked or deleted group)"
             snap.meta["omitted"].pop("allies", None)
@@ -503,7 +513,7 @@ def group_network(client: RobloxClient, group_id: int, *,
     member_groups = [group_id] + neighbours
     for i, gid in enumerate(member_groups, 1):
         _say(progress, f"group network: members of group {gid} ({i}/{len(member_groups)})")
-        rows = _attempt(snap, "membership", client.groups.members, gid, max_items=max_members)
+        rows = _attempt(snap, "membership", client.groups.get_members, gid, max_items=max_members)
         if rows is _OMITTED:
             snap.meta["failed"][gid] = "members unavailable"
             snap.meta["omitted"].pop("membership", None)
@@ -528,7 +538,7 @@ def group_network(client: RobloxClient, group_id: int, *,
         for i, uid in enumerate(users, 1):
             if i == 1 or i % 25 == 0:
                 _say(progress, f"group network: member profiles ({i}/{len(users)})")
-            prof = _attempt(snap, "member_profiles", client.users.get, uid)
+            prof = _attempt(snap, "member_profiles", client.users.get_info, uid)
             if prof is not _OMITTED:
                 profiles.append(prof)
             else:
@@ -542,7 +552,7 @@ def group_network(client: RobloxClient, group_id: int, *,
         for i, uid in enumerate(users, 1):
             if i == 1 or i % 25 == 0:
                 _say(progress, f"group network: favourite games ({i}/{len(users)})")
-            favs = _attempt(snap, "favorite_games", client.games.user_favorites, uid)
+            favs = _attempt(snap, "favorite_games", client.games.get_user_favorites, uid)
             if favs is _OMITTED:
                 snap.meta["omitted"].pop("favorite_games", None)
                 snap.meta["failed"][uid] = "favorites unavailable"

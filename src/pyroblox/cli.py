@@ -32,9 +32,10 @@ from .errors import (
     PrivateError, RateLimitedError, RobloxError, ServerError,
 )
 from .export import Snapshot, edgelist_to_graphml, to_dataframe, write_json, write_records
+from .models.base import to_record, to_records
 from .urls import looks_like_id, parse_roblox_url
 
-log = logging.getLogger("robloxwrapper.cli")
+log = logging.getLogger("pyroblox.cli")
 
 
 # -- runtime ------------------------------------------------------------------
@@ -61,7 +62,10 @@ class Runtime:
             click.echo(f"  ... {message}", err=True)
 
     def emit(self, name: str, records: Any, summary: Optional[str] = None) -> Optional[Path]:
-        """Print JSON (``--stdout``) or write ``<name>.<fmt>`` and report the path."""
+        """Print JSON (``--stdout``) or write ``<name>.<fmt>`` and report the path.
+
+        ``records`` may be a model, a dict, or a list of either."""
+        records = to_record(records)
         if self.stdout:
             click.echo(json.dumps(records, indent=2, ensure_ascii=False, default=str))
             return None
@@ -161,8 +165,8 @@ def resolve_user(rt: Runtime, value: str) -> int:
     if kind is not None:
         raise click.ClickException(f"That is a {kind} link, not a user.")
     match = rt.client.users.resolve(value)
-    rt.say(f"Resolved username {value!r} to user id {match['id']}")
-    return int(match["id"])
+    rt.say(f"Resolved username {value!r} to user id {match.id}")
+    return int(match.id)
 
 
 def resolve_group(rt: Runtime, value: str) -> int:
@@ -186,7 +190,7 @@ def resolve_universe(rt: Runtime, value: str, place: bool) -> int:
     if looks_like_id(value):
         ident = int(value)
         if place:
-            universe = rt.client.games.place_to_universe(ident)
+            universe = rt.client.games.get_universe_id(ident)
             rt.say(f"Resolved place {ident} to universe {universe}")
             return universe
         return ident
@@ -197,7 +201,7 @@ def resolve_universe(rt: Runtime, value: str, place: bool) -> int:
                                    "roblox.com/games/<id> link.")
     if kind != "game":
         raise click.ClickException(f"That is a {kind} link, not a game.")
-    universe = rt.client.games.place_to_universe(ident)
+    universe = rt.client.games.get_universe_id(ident)
     rt.say(f"Resolved place {ident} to universe {universe}")
     return universe
 
@@ -272,12 +276,12 @@ def check(rt: Runtime) -> None:
     """Test the connection to Roblox and whether your cookie works."""
     click.echo(f"PyRoblox {__version__}")
     click.echo(f"Output folder: {rt.output_dir.resolve()}")
-    user = rt.client.users.get(1)
-    click.echo(f"Roblox reachable: yes (user 1 is {user.get('name')!r})")
+    user = rt.client.users.get_info(1)
+    click.echo(f"Roblox reachable: yes (user 1 is {user.name!r})")
     if rt.client.has_cookie:
         try:
-            me = rt.client.users.authenticated()
-            click.echo(f"Cookie: valid, logged in as {me.get('name')!r} (id {me.get('id')})")
+            me = rt.client.users.get_authenticated()
+            click.echo(f"Cookie: valid, logged in as {me.name!r} (id {me.id})")
         except AuthRequiredError:
             click.echo("Cookie: REJECTED by Roblox. Copy a fresh .ROBLOSECURITY value.")
     elif rt.client.cookie_rejected:
@@ -302,11 +306,11 @@ def resolve(rt: Runtime, value: str) -> None:
             raise click.ClickException("A bare number could be a user, group, or game id; "
                                        "give a link or a username.")
         match = rt.client.users.resolve(value)
-        kind, ident = "user", int(match["id"])
-        click.echo(f"user {ident} ({match.get('name')}, display name {match.get('displayName')!r})")
+        kind, ident = "user", int(match.id)
+        click.echo(f"user {ident} ({match.name}, display name {match.display_name!r})")
         return
     if kind == "game":
-        universe = rt.client.games.place_to_universe(ident)
+        universe = rt.client.games.get_universe_id(ident)
         click.echo(f"game: place {ident} belongs to universe {universe}")
         return
     click.echo(f"{kind} {ident}")
@@ -339,16 +343,17 @@ def _user_cmd(name: str, help_text: str, paged: bool = True):
 
 @_user_cmd("info", "Profile: name, display name, created date, banned flag, description.", paged=False)
 def user_info(rt: Runtime, uid: int, max_items: Optional[int]) -> None:
-    info = rt.client.users.get(uid)
-    summary = (f"{info.get('name')} (display name {info.get('displayName')!r}, id {uid})\n"
-               f"  created: {info.get('created')}  banned: {info.get('isBanned')}  "
-               f"verified: {info.get('hasVerifiedBadge')}")
+    info = rt.client.users.get_info(uid)
+    created = info.created.isoformat().replace("+00:00", "Z") if info.created else None
+    summary = (f"{info.name} (display name {info.display_name!r}, id {uid})\n"
+               f"  created: {created}  banned: {info.is_banned}  "
+               f"verified: {info.has_verified_badge}")
     rt.emit(f"user_{uid}_profile", info, summary)
 
 
 @_user_cmd("friends", "Friend list (ids plus usernames looked up in bulk).")
 def user_friends(rt: Runtime, uid: int, max_items: Optional[int]) -> None:
-    friends = rt.client.friends.friends(uid)
+    friends = to_records(rt.client.friends.get_friends(uid))
     if max_items:
         friends = friends[:max_items]
     friends = _hydrate_names(rt.client, friends)
@@ -357,27 +362,27 @@ def user_friends(rt: Runtime, uid: int, max_items: Optional[int]) -> None:
 
 @_user_cmd("followers", "Followers (needs a cookie).")
 def user_followers(rt: Runtime, uid: int, max_items: Optional[int]) -> None:
-    rows = rt.client.friends.followers(uid, max_items=max_items)
+    rows = rt.client.friends.get_followers(uid, max_items=max_items)
     rt.emit(f"user_{uid}_followers", rows, f"{len(rows)} follower(s)")
 
 
 @_user_cmd("following", "Accounts this user follows (needs a cookie).")
 def user_following(rt: Runtime, uid: int, max_items: Optional[int]) -> None:
-    rows = rt.client.friends.followings(uid, max_items=max_items)
+    rows = rt.client.friends.get_followings(uid, max_items=max_items)
     rt.emit(f"user_{uid}_followings", rows, f"{len(rows)} followed account(s)")
 
 
 @_user_cmd("counts", "Friend, follower, and following counts.", paged=False)
 def user_counts(rt: Runtime, uid: int, max_items: Optional[int]) -> None:
-    counts = rt.client.friends.counts(uid)
+    counts = rt.client.friends.get_counts(uid)
     rt.emit(f"user_{uid}_counts", counts,
-            f"friends {counts['friends']}, followers {counts['followers']}, "
-            f"following {counts['followings']}")
+            f"friends {counts.friends}, followers {counts.followers}, "
+            f"following {counts.followings}")
 
 
 @_user_cmd("groups", "Groups the user belongs to, with their role in each.")
 def user_groups(rt: Runtime, uid: int, max_items: Optional[int]) -> None:
-    rows = rt.client.groups.user_groups(uid)
+    rows = rt.client.groups.get_user_groups(uid)
     if max_items:
         rows = rows[:max_items]
     rt.emit(f"user_{uid}_groups", rows, f"{len(rows)} group(s)")
@@ -385,40 +390,40 @@ def user_groups(rt: Runtime, uid: int, max_items: Optional[int]) -> None:
 
 @_user_cmd("games", "Experiences (games) the user has published.")
 def user_games(rt: Runtime, uid: int, max_items: Optional[int]) -> None:
-    rows = rt.client.games.user_games(uid, max_items=max_items)
+    rows = rt.client.games.get_user_games(uid, max_items=max_items)
     rt.emit(f"user_{uid}_games", rows, f"{len(rows)} game(s)")
 
 
 @_user_cmd("favorites", "Experiences the user has favourited.")
 def user_favorites(rt: Runtime, uid: int, max_items: Optional[int]) -> None:
-    rows = rt.client.games.user_favorites(uid, max_items=max_items)
+    rows = rt.client.games.get_user_favorites(uid, max_items=max_items)
     rt.emit(f"user_{uid}_favorite_games", rows, f"{len(rows)} favourite game(s)")
 
 
 @_user_cmd("badges", "Badges earned in games (needs a cookie).")
 def user_badges(rt: Runtime, uid: int, max_items: Optional[int]) -> None:
-    rows = rt.client.badges.user_badges(uid, max_items=max_items)
+    rows = rt.client.badges.get_user_badges(uid, max_items=max_items)
     rt.emit(f"user_{uid}_badges", rows, f"{len(rows)} badge(s)")
 
 
 @_user_cmd("history", "Previous usernames.")
 def user_history(rt: Runtime, uid: int, max_items: Optional[int]) -> None:
-    rows = rt.client.users.username_history(uid, max_items=max_items)
+    rows = rt.client.users.get_username_history(uid, max_items=max_items)
     rt.emit(f"user_{uid}_username_history", rows, f"{len(rows)} previous name(s)")
 
 
 @_user_cmd("avatar", "Currently worn avatar items and body settings.", paged=False)
 def user_avatar(rt: Runtime, uid: int, max_items: Optional[int]) -> None:
-    avatar = rt.client.avatar.get(uid)
-    assets = avatar.get("assets") or []
+    avatar = rt.client.avatar.get_avatar(uid)
+    assets = avatar.assets or []
     rt.emit(f"user_{uid}_avatar_assets", assets, f"{len(assets)} worn item(s); "
-            f"avatar type {avatar.get('playerAvatarType')}")
+            f"avatar type {avatar.player_avatar_type}")
 
 
 @_user_cmd("social", "Linked social accounts (values are hidden unless you use a cookie).", paged=False)
 def user_social(rt: Runtime, uid: int, max_items: Optional[int]) -> None:
-    channels = rt.client.account.promotion_channels(uid)
-    shown = {k: v for k, v in channels.items() if v}
+    channels = rt.client.account.get_promotion_channels(uid)
+    shown = {k: v for k, v in to_record(channels).items() if v}
     note = ", ".join(f"{k}: {v}" for k, v in shown.items()) if shown else \
         "none visible" + ("" if rt.client.has_cookie else " (add --cookie to see them)")
     rt.emit(f"user_{uid}_promotion_channels", channels, note)
@@ -426,9 +431,9 @@ def user_social(rt: Runtime, uid: int, max_items: Optional[int]) -> None:
 
 @_user_cmd("presence", "Online status and last known location.", paged=False)
 def user_presence(rt: Runtime, uid: int, max_items: Optional[int]) -> None:
-    rows = rt.client.presence.get([uid])
+    rows = rt.client.presence.get_presence([uid])
     kinds = {0: "offline", 1: "online", 2: "in game", 3: "in Studio"}
-    state = kinds.get((rows or [{}])[0].get("userPresenceType"), "unknown")
+    state = kinds.get(rows[0].user_presence_type if rows else None, "unknown")
     rt.emit(f"user_{uid}_presence", rows, f"status: {state}")
 
 
@@ -506,54 +511,54 @@ def _group_cmd(name: str, help_text: str, paged: bool = True):
 
 @_group_cmd("info", "Group profile: name, owner, member count, description.", paged=False)
 def group_info(rt: Runtime, gid: int, max_items: Optional[int]) -> None:
-    info = rt.client.groups.get(gid)
-    owner = info.get("owner") or {}
-    summary = (f"{info.get('name')} (id {gid})\n  owner: {owner.get('username')} "
-               f"(id {owner.get('userId')})  members: {info.get('memberCount')}  "
-               f"locked: {bool(info.get('isLocked'))}")
+    info = rt.client.groups.get_info(gid)
+    owner = info.owner
+    summary = (f"{info.name} (id {gid})\n  owner: {owner.username if owner else None} "
+               f"(id {owner.user_id if owner else None})  members: {info.member_count}  "
+               f"locked: {bool(info.is_locked)}")
     rt.emit(f"group_{gid}_profile", info, summary)
 
 
 @_group_cmd("members", "All members with their role. Roblox allows ~100 per second here.")
 def group_members(rt: Runtime, gid: int, max_items: Optional[int]) -> None:
-    rows = rt.client.groups.members(gid, max_items=max_items)
+    rows = rt.client.groups.get_members(gid, max_items=max_items)
     rt.emit(f"group_{gid}_members", rows, f"{len(rows)} member(s)"
             + (" (truncated by --max)" if rows.truncated else ""))
 
 
 @_group_cmd("roles", "Roles (ranks) in the group and how many members hold each.", paged=False)
 def group_roles(rt: Runtime, gid: int, max_items: Optional[int]) -> None:
-    rows = rt.client.groups.roles(gid)
+    rows = rt.client.groups.get_roles(gid)
     rt.emit(f"group_{gid}_roles", rows, f"{len(rows)} role(s)")
 
 
 @_group_cmd("allies", "Allied groups.")
 def group_allies(rt: Runtime, gid: int, max_items: Optional[int]) -> None:
-    rows = rt.client.groups.allies(gid, max_items=max_items)
+    rows = rt.client.groups.get_allies(gid, max_items=max_items)
     rt.emit(f"group_{gid}_allies", rows, f"{len(rows)} ally group(s)")
 
 
 @_group_cmd("enemies", "Enemy groups.")
 def group_enemies(rt: Runtime, gid: int, max_items: Optional[int]) -> None:
-    rows = rt.client.groups.enemies(gid, max_items=max_items)
+    rows = rt.client.groups.get_enemies(gid, max_items=max_items)
     rt.emit(f"group_{gid}_enemies", rows, f"{len(rows)} enemy group(s)")
 
 
 @_group_cmd("games", "Experiences published by the group.")
 def group_games(rt: Runtime, gid: int, max_items: Optional[int]) -> None:
-    rows = rt.client.games.group_games(gid, max_items=max_items)
+    rows = rt.client.games.get_group_games(gid, max_items=max_items)
     rt.emit(f"group_{gid}_games", rows, f"{len(rows)} game(s)")
 
 
 @_group_cmd("history", "Previous group names.")
 def group_history(rt: Runtime, gid: int, max_items: Optional[int]) -> None:
-    rows = rt.client.groups.name_history(gid, max_items=max_items)
+    rows = rt.client.groups.get_name_history(gid, max_items=max_items)
     rt.emit(f"group_{gid}_name_history", rows, f"{len(rows)} previous name(s)")
 
 
 @_group_cmd("social", "Linked social accounts (Discord, X, YouTube...). Needs a cookie.", paged=False)
 def group_social(rt: Runtime, gid: int, max_items: Optional[int]) -> None:
-    rows = rt.client.groups.social_links(gid)
+    rows = rt.client.groups.get_social_links(gid)
     rt.emit(f"group_{gid}_social_links", rows, f"{len(rows)} social link(s)")
 
 
@@ -640,18 +645,19 @@ def _game_cmd(name: str, help_text: str, paged: bool = True):
 
 @_game_cmd("info", "Experience profile: creator, visits, players online, created date.", paged=False)
 def game_info(rt: Runtime, universe: int, max_items: Optional[int]) -> None:
-    info = rt.client.games.get(universe)
-    creator = info.get("creator") or {}
-    summary = (f"{info.get('name')} (universe {universe}, root place {info.get('rootPlaceId')})\n"
-               f"  creator: {creator.get('name')} ({creator.get('type')} {creator.get('id')})  "
-               f"visits: {info.get('visits')}  playing now: {info.get('playing')}")
+    info = rt.client.games.get_info(universe)
+    creator = info.creator
+    summary = (f"{info.name} (universe {universe}, root place {info.root_place_id})\n"
+               f"  creator: {creator.name if creator else None} "
+               f"({creator.type if creator else None} {creator.id if creator else None})  "
+               f"visits: {info.visits}  playing now: {info.playing}")
     rt.emit(f"game_{universe}_profile", info, summary)
 
 
 @_game_cmd("votes", "Up/down votes and favourite count.", paged=False)
 def game_votes(rt: Runtime, universe: int, max_items: Optional[int]) -> None:
-    votes = dict(rt.client.games.votes(universe))
-    votes["favoritesCount"] = rt.client.games.favorites_count(universe)
+    votes = to_record(rt.client.games.get_votes(universe))
+    votes["favoritesCount"] = rt.client.games.get_favorites_count(universe)
     rt.emit(f"game_{universe}_votes", votes,
             f"up {votes.get('upVotes')}  down {votes.get('downVotes')}  "
             f"favourites {votes['favoritesCount']}")
@@ -659,26 +665,26 @@ def game_votes(rt: Runtime, universe: int, max_items: Optional[int]) -> None:
 
 @_game_cmd("servers", "Public servers running right now (~3 calls/min allowed).")
 def game_servers(rt: Runtime, universe: int, max_items: Optional[int]) -> None:
-    info = rt.client.games.get(universe)
-    rows = rt.client.games.servers(info["rootPlaceId"], max_items=max_items or 100)
+    info = rt.client.games.get_info(universe)
+    rows = rt.client.games.get_servers(info.root_place_id, max_items=max_items or 100)
     rt.emit(f"game_{universe}_servers", rows, f"{len(rows)} server(s)")
 
 
 @_game_cmd("badges", "Badges the experience awards.")
 def game_badges(rt: Runtime, universe: int, max_items: Optional[int]) -> None:
-    rows = rt.client.badges.universe_badges(universe, max_items=max_items)
+    rows = rt.client.badges.get_universe_badges(universe, max_items=max_items)
     rt.emit(f"game_{universe}_badges", rows, f"{len(rows)} badge(s)")
 
 
 @_game_cmd("passes", "Game passes offered by the experience (for sale or not).", paged=False)
 def game_passes(rt: Runtime, universe: int, max_items: Optional[int]) -> None:
-    rows = rt.client.games.game_passes(universe)
+    rows = rt.client.games.get_game_passes(universe)
     rt.emit(f"game_{universe}_game_passes", rows, f"{len(rows)} game pass(es)")
 
 
 @_game_cmd("places", "All places inside the experience.")
 def game_places(rt: Runtime, universe: int, max_items: Optional[int]) -> None:
-    rows = rt.client.games.places(universe, max_items=max_items)
+    rows = rt.client.games.get_places(universe, max_items=max_items)
     rt.emit(f"game_{universe}_places", rows, f"{len(rows)} place(s)")
 
 
@@ -751,11 +757,11 @@ def batch_users(rt: Runtime, file: str, full: bool) -> None:
         for i, uid in enumerate(ids, 1):
             rt.progress(f"profile {i}/{len(ids)}: user {uid}")
             try:
-                rows.append(rt.client.users.get(uid))
+                rows.append(rt.client.users.get_info(uid))
             except (NotFoundError, BadRequestError) as e:
                 rows.append({"id": uid, "error": e.roblox_message or type(e).__name__})
     else:
-        rows = rt.client.users.batch_get(ids)
+        rows = rt.client.users.get_batch(ids)
     rt.emit(f"batch_users_{Path(file).stem}", rows, f"{len(rows)} of {len(ids)} found")
 
 
@@ -766,7 +772,7 @@ def batch_users(rt: Runtime, file: str, full: bool) -> None:
 def batch_groups(rt: Runtime, file: str) -> None:
     """Basic profiles for a list of group ids."""
     ids = _read_ids(file)
-    rows = rt.client.groups.batch_get(ids)
+    rows = rt.client.groups.get_batch(ids)
     rt.emit(f"batch_groups_{Path(file).stem}", rows, f"{len(rows)} of {len(ids)} found")
 
 

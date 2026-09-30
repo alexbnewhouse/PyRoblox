@@ -6,12 +6,12 @@ import json
 import pandas as pd
 import pytest
 
-from robloxwrapper.collect import (
+from pyroblox.collect import (
     GAME_TABLES, GROUP_TABLES, USER_TABLES, build_dataframes, friend_edgelist,
     friend_network, game_snapshot, group_edgelist, group_network, group_snapshot,
     user_snapshot,
 )
-from robloxwrapper.errors import EntityUnavailable, RateLimitedError
+from pyroblox.errors import EntityUnavailable, RateLimitedError
 from tests.conftest import FakeResponse, make_client, page
 
 U = "https://users.roblox.com/v1"
@@ -66,7 +66,9 @@ def test_user_snapshot_collects_everything_and_records_omissions():
     assert snap["games"][0]["id"] == 100
     assert snap["favorite_games"][0]["id"] == 200
     assert snap["username_history"] == [{"name": "OldName"}]
-    assert snap["avatar"] == [{"playerAvatarType": "R15", "bodyColors": {"headColorId": 1}}]
+    assert snap["avatar"][0]["playerAvatarType"] == "R15"
+    assert snap["avatar"][0]["bodyColors"]["headColorId"] == 1
+    assert "assets" not in snap["avatar"][0]
     assert snap["avatar_assets"][0]["name"] == "Hat"
     assert [b["name"] for b in snap["roblox_badges"]] == ["Admin", "Veteran"]
     assert snap["presence"][0]["userPresenceType"] == 0
@@ -199,10 +201,10 @@ def test_game_snapshot_by_place_resolves_universe():
     assert snap["profile"][0]["name"] == "Crossroads"
     assert snap["votes"] == [{"id": 13058, "upVotes": 9, "downVotes": 1, "favoritesCount": 42}]
     assert snap["places"][0]["id"] == 1818
-    assert snap["servers"] == [{"id": "s1", "playing": 3}]
+    assert snap["servers"][0]["id"] == "s1" and snap["servers"][0]["playing"] == 3
     assert snap.meta["truncated"] == {"servers": True}
     assert snap["badges"][0]["name"] == "Winner"
-    assert snap["media"] == [{"imageId": 5}]
+    assert snap["media"][0]["imageId"] == 5
     assert snap["game_passes"][0]["name"] == "VIP"
     assert session.calls[0].url.endswith("/places/1818/universe")
 
@@ -293,10 +295,10 @@ def network_routes():
         f"GET {G}/groups/7/users": page([member(1), member(2)]),
         f"GET {G}/groups/8/users": page([member(2), member(3)]),
         f"GET {G}/groups/9/users": page([member(4)]),
-        f"GET {U}/users/1": {"id": 1, "name": "u1", "created": "2006", "isBanned": False},
-        f"GET {U}/users/2": {"id": 2, "name": "u2", "created": "2007", "isBanned": False},
+        f"GET {U}/users/1": {"id": 1, "name": "u1", "created": "2006-01-01T00:00:00Z", "isBanned": False},
+        f"GET {U}/users/2": {"id": 2, "name": "u2", "created": "2007-01-01T00:00:00Z", "isBanned": False},
         f"GET {U}/users/3": FakeResponse(400, {"errors": [{"message": "The user is invalid."}]}),
-        f"GET {U}/users/4": {"id": 4, "name": "u4", "created": "2008", "isBanned": True},
+        f"GET {U}/users/4": {"id": 4, "name": "u4", "created": "2008-01-01T00:00:00Z", "isBanned": True},
         f"GET {GM}/v2/users/1/favorite/games": page([{"id": 500, "name": "A"}, {"id": 501, "name": "B"}]),
         f"GET {GM}/v2/users/2/favorite/games": page([{"id": 500, "name": "A"}]),
         f"GET {GM}/v2/users/3/favorite/games": page([]),

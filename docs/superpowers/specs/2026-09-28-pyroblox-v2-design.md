@@ -206,3 +206,28 @@ endpoint), and the favourite-games endpoint rejects `sortOrder=Asc`.
 - Scraping data that requires the target's consent or a logged-in friend relationship
   (private inventories, friends-only servers).
 - Async client.
+
+## Addendum, 2026-09-30: merge with the March 2026 rewrite
+
+When this work was pushed, `origin/main` already carried a second, independent
+2.0 rewrite from March 2026 (`src/pyroblox`: httpx + Pydantic v2 models, Python
+3.10+, 109 tests, no CLI, endpoints not live-verified). The user chose to merge
+the two designs rather than pick one. Decisions:
+
+- Package name and layout from March: `pyroblox` under `src/`, hatchling,
+  Python >= 3.10, ruff and mypy config. `robloxwrapper` becomes a shim.
+- Typed Pydantic models on every API method (March style, `extra="allow"`,
+  camelCase aliases), returned as models or `PagedList[Model]`. CSV export
+  converts with `model_dump(by_alias=True, mode="json")`, so column names are
+  unchanged.
+- March's `get_*` method names are canonical (`client.users.get_info`,
+  `client.groups.get_members`). `client.catalog` replaces `client.assets`
+  (kept as an alias).
+- The HTTP core stays on `requests` with this document's client internals
+  (header-driven pacing, per-host throttle, CSRF, cookie scoping, row
+  pagination, injectable clock). Added from March: context manager, jittered
+  backoff, `AuthenticationError` parent for 401/403, the exception aliases
+  `PyRobloxError`, `RobloxAPIError`, `RateLimitError`, and
+  `pyroblox.contrib.edgelists` / `pyroblox.contrib.dataframes` entry points.
+- Dropped: httpx and the pytest-httpx tests; the leftover broken v1 modules
+  that March had kept beside `src/`.

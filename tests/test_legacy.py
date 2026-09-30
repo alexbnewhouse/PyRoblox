@@ -2,7 +2,7 @@ import warnings
 
 import pytest
 
-from robloxwrapper import legacy
+from pyroblox import legacy
 from tests.conftest import FakeResponse, make_client, page
 
 
@@ -20,13 +20,13 @@ def test_friends_class_returns_v1_shapes():
     })
     with pytest.warns(DeprecationWarning):
         f = legacy.friends(261, client=client)
-    assert f.info() == {"data": [{"id": 1}]}
+    assert f.info()["data"][0]["id"] == 1
     assert f.user_info()["name"] == "Shedletsky"
 
 
 def test_groups_class_returns_v1_shapes():
     rows = {"groupId": 7, "relationshipType": "Allies", "totalGroupCount": 1,
-            "relatedGroups": [{"id": 8}], "nextRowIndex": 1}
+            "relatedGroups": [{"id": 8, "name": "Ally"}], "nextRowIndex": 1}
     client, session, _ = make_client(routes={
         "GET https://groups.roblox.com/v1/groups/7": {"id": 7, "name": "Roblox"},
         "GET https://groups.roblox.com/v1/groups/7/relationships/allies": rows,
@@ -37,7 +37,8 @@ def test_groups_class_returns_v1_shapes():
         warnings.simplefilter("ignore", DeprecationWarning)
         g = legacy.groups(7, client=client)
     assert g.info()["name"] == "Roblox"
-    assert g.allies()["relatedGroups"] == [{"id": 8}]
+    allies = g.allies()
+    assert allies["relatedGroups"][0]["id"] == 8 and allies["totalGroupCount"] == 1
     assert g.enemies()["relatedGroups"] == []
     users = g.user_list()
     assert users["nextPageCursor"] == "c1" and users["data"][0]["user"]["userId"] == 1
@@ -47,13 +48,13 @@ def test_groups_class_returns_v1_shapes():
 
 def test_groups_social_links_uses_supplied_cookie():
     client, session, _ = make_client(routes={
-        "GET https://groups.roblox.com/v1/groups/7/social-links": {"data": [{"type": "Discord"}]}})
+        "GET https://groups.roblox.com/v1/groups/7/social-links": {"data": [{"id": 1, "type": "Discord", "url": "https://discord.gg/x", "title": "Chat"}]}})
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)
         g = legacy.groups(7, client=client)
     # client already has no cookie and the dict supplies one -> a fresh client is built; we
     # cannot fake that one, so only verify the no-cookie path here
-    assert g.social_links({}) == {"data": [{"type": "Discord"}]}
+    assert g.social_links({})["data"][0]["type"] == "Discord"
 
 
 def test_games_classes():

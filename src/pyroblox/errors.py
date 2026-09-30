@@ -14,21 +14,28 @@ The subclasses map to the HTTP outcomes that matter to a researcher:
 * :class:`RateLimitedError` (429) – Roblox is throttling this IP and the retries
   were exhausted. Wait a minute and try again.
 * :class:`ServerError` (5xx) – Roblox itself is failing.
+
+:class:`AuthenticationError` is the shared parent of the 401 and 403 errors, and
+the names ``PyRobloxError``, ``RobloxAPIError``, and ``RateLimitError`` are kept
+as aliases for code written against the March 2026 ``pyroblox`` API.
 """
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
 
 class RobloxError(Exception):
     """Base class for all PyRoblox errors."""
 
     def __init__(self, message: str, *, status: Optional[int] = None,
-                 url: Optional[str] = None, roblox_message: Optional[str] = None):
+                 url: Optional[str] = None, roblox_message: Optional[str] = None,
+                 errors: Optional[list[dict[str, Any]]] = None):
         self.status = status
         self.url = url
         self.roblox_message = roblox_message
+        #: Roblox's ``errors`` array from the response body, when there was one.
+        self.errors: list[dict[str, Any]] = list(errors or [])
         text = message
         if roblox_message:
             text = f"{message} (Roblox says: {roblox_message})"
@@ -36,16 +43,25 @@ class RobloxError(Exception):
             text = f"{text} [{url}]"
         super().__init__(text)
 
+    @property
+    def status_code(self) -> Optional[int]:
+        """Alias of :attr:`status` (March 2026 API name)."""
+        return self.status
+
 
 class NotFoundError(RobloxError):
     """HTTP 404: the entity does not exist or has been deleted."""
 
 
-class PrivateError(RobloxError):
+class AuthenticationError(RobloxError):
+    """Parent of the two access-denied errors (HTTP 401 and 403)."""
+
+
+class PrivateError(AuthenticationError):
     """HTTP 403: the entity exists but is private or hidden from you."""
 
 
-class AuthRequiredError(RobloxError):
+class AuthRequiredError(AuthenticationError):
     """HTTP 401: this endpoint needs a valid .ROBLOSECURITY cookie."""
 
 
@@ -71,3 +87,9 @@ class EntityUnavailable(RobloxError):
     def __init__(self, reason: str, message: str = ""):
         self.reason = reason
         super().__init__(message or f"entity unavailable: {reason}")
+
+
+# Names used by the March 2026 pyroblox API, kept so that code keeps working.
+PyRobloxError = RobloxError
+RobloxAPIError = RobloxError
+RateLimitError = RateLimitedError

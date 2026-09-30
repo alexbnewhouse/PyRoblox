@@ -19,7 +19,7 @@ from urllib.parse import urlencode, urlsplit
 import pytest
 from requests.structures import CaseInsensitiveDict
 
-from robloxwrapper.client import RobloxClient
+from pyroblox.client import RobloxClient
 
 
 class FakeResponse:
@@ -119,6 +119,7 @@ def make_client(responses=None, cookie=None, *, routes=None, **kw):
     fake = FakeClock()
     session = FakeSession(responses, routes=routes)
     kw.setdefault("burst", 10_000)  # tests should not sleep unless they test the throttle
+    kw.setdefault("jitter", False)  # deterministic backoff in tests
     client = RobloxClient(cookie, session=session, clock=fake.clock,
                           sleep=fake.sleep, **kw)
     return client, session, fake

@@ -3,10 +3,10 @@ CSRF handling, and the two pagination styles."""
 
 import pytest
 
-from robloxwrapper.client import PagedList, RobloxClient, chunked, endpoint_key
-from robloxwrapper.errors import (
-    AuthRequiredError, BadRequestError, NotFoundError, PrivateError,
-    RateLimitedError, RobloxError, ServerError,
+from pyroblox.client import PagedList, RobloxClient, chunked, endpoint_key
+from pyroblox.errors import (
+    AuthenticationError, AuthRequiredError, BadRequestError, NotFoundError, PrivateError,
+    PyRobloxError, RateLimitError, RateLimitedError, RobloxAPIError, RobloxError, ServerError,
 )
 from tests.conftest import FakeResponse, make_client, page
 
@@ -134,6 +134,56 @@ def test_400_with_bare_string_body_keeps_the_message():
     with pytest.raises(BadRequestError) as exc:
         client.get("https://games.roblox.com/v2/users/1/favorite/games")
     assert exc.value.roblox_message == "Ascending sort order is not supported."
+
+
+def test_error_carries_roblox_errors_list_and_march_aliases():
+    body = {"errors": [{"code": 3, "message": "The user is invalid."}]}
+    client, _, _ = make_client([FakeResponse(400, body)])
+    with pytest.raises(RobloxAPIError) as exc:      # alias of RobloxError
+        client.get("https://users.roblox.com/v1/users/5")
+    assert exc.value.errors == body["errors"] and exc.value.status_code == 400
+    assert PyRobloxError is RobloxError and RateLimitError is RateLimitedError
+    client, _, _ = make_client([FakeResponse(403)])
+    with pytest.raises(AuthenticationError):
+        client.get("https://x.roblox.com/y")
+    client, _, _ = make_client([FakeResponse(401)])
+    with pytest.raises(AuthenticationError):
+        client.get("https://x.roblox.com/y")
+
+
+def test_jitter_spreads_backoff_but_not_server_directed_waits():
+    client, _, fake = make_client([FakeResponse(429), FakeResponse(200, {})],
+                                  jitter=True, rng=lambda: 0.0)
+    client.get("https://games.roblox.com/v1/games")
+    assert fake.sleeps == [0.5]                     # 1.0 * (0.5 + 0.0 * 0.5)
+    client, _, fake = make_client([FakeResponse(429, headers={"Retry-After": "7"}), FakeResponse(200, {})],
+                                  jitter=True, rng=lambda: 0.0)
+    client.get("https://games.roblox.com/v1/games")
+    assert fake.sleeps == [7.0]                     # Roblox said 7; no jitter applied
+
+
+def test_context_manager_closes_only_owned_session():
+    closed = []
+    class S:
+        def close(self): closed.append(True)
+    with RobloxClient(session=S()) as c:
+        pass
+    assert closed == []                              # injected session is left alone
+    c = RobloxClient(); c._session = S(); c._owns_session = True
+    c.close(); assert closed == [True]
+
+
+def test_fetch_all_and_fetch_rows_validate_into_model():
+    from pyroblox.models.base import RobloxModel
+    class M(RobloxModel):
+        id: int
+    client, _, _ = make_client([FakeResponse(200, page([{"id": 1, "x": 2}], None))])
+    out = client.fetch_all("https://x.roblox.com/v1/list", model=M)
+    assert out[0].id == 1 and out[0].x == 2 and out.truncated is False
+    client, _, _ = make_client([FakeResponse(200, {"relatedGroups": [{"id": 9}], "totalGroupCount": 1, "nextRowIndex": 1})])
+    assert client.fetch_rows("https://g/x", model=M)[0].id == 9
+    client, _, _ = make_client([FakeResponse(200, page([{"id": 3}], None))])
+    assert [m.id for m in client.paginate("https://x.roblox.com/v1/list", model=M)] == [3]
 
 
 def test_other_4xx_raises_roblox_error():
@@ -398,7 +448,8 @@ def test_chunked():
 def test_domain_apis_are_cached_attributes():
     client = RobloxClient(session=object())
     for name in ("users", "friends", "groups", "games", "badges", "avatar",
-                 "inventory", "account", "presence", "thumbnails", "assets"):
+                 "inventory", "account", "presence", "thumbnails", "catalog"):
         api = getattr(client, name)
         assert getattr(client, name) is api
         assert api.client is client
+    assert client.assets is client.catalog

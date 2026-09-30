@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from robloxwrapper.config import RobloxConfig, load_config
+from pyroblox.config import RobloxConfig, load_config
 
 
 def test_defaults():

@@ -61,7 +61,7 @@ shortcut is not on your path. Use this longer form instead, wherever this guide
 says `roblox`:
 
 ```
-python3 -m robloxwrapper.cli check
+python3 -m pyroblox.cli check
 ```
 
 ## Your first commands

@@ -1,8 +1,8 @@
-# PyRoblox
+# pyroblox
 
-Pull public Roblox data about users, groups, and games into CSV files or pandas
-DataFrames. Built for trust-and-safety researchers, including people who do not
-write code.
+Pull public Roblox data about users, groups, and games into typed Python
+models, CSV files, or pandas DataFrames. Built for trust-and-safety
+researchers, including people who do not write code.
 
 ```
 pip install "git+https://github.com/CTEC-MIIS/PyRoblox"
@@ -44,7 +44,7 @@ cookie is optional and unlocks only the few endpoints marked "cookie" above.
 - **[Getting started](docs/getting-started.md)**: install and first commands, written for non-programmers.
 - **[Command reference](docs/cli-reference.md)**: every `roblox` command, option, and output file.
 - **[Data dictionary](docs/data-dictionary.md)**: what each CSV column means.
-- **[Python API](docs/python-api.md)**: using PyRoblox as a library, with recipes and a v1 migration guide.
+- **[Python API](docs/python-api.md)**: the client, typed models, collectors, recipes, and migration tables.
 - **[Roblox endpoints](docs/roblox-endpoints.md)**: which endpoints work without a cookie, their rate limits, and what is dead.
 - **[Responsible use](docs/responsible-use.md)**: ethics, data protection, and reporting abuse.
 - **[Audit, 2026-09-28](docs/AUDIT-2026-09-28.md)**: what was wrong with v1 and why v2 exists.
@@ -53,47 +53,58 @@ cookie is optional and unlocks only the few endpoints marked "cookie" above.
 ## Quick start (Python)
 
 ```python
-from robloxwrapper import RobloxClient, user_snapshot, group_network
+from pyroblox import RobloxClient, user_snapshot, group_network
 
-client = RobloxClient()                      # RobloxClient(cookie="...") for cookie-only data
+with RobloxClient() as client:                 # RobloxClient(cookie="...") for cookie-only data
+    user = client.users.get_info(261)          # typed model: user.name, user.created, user.is_banned
+    members = client.groups.get_members(7, max_items=500)   # PagedList[GroupMember], .truncated flag
+    members[0].user.username
 
-user = client.users.get(261)                 # one user, as a dict
-members = client.groups.members(7, max_items=500)   # paginated list with .truncated flag
+    snap = user_snapshot(client, 261)          # every table about a user
+    snap.save("roblox_data")                   # one CSV per table + manifest.json
+    frames = snap.to_dataframes()              # or work in pandas
 
-snap = user_snapshot(client, 261)            # every table about a user
-snap.save("roblox_data")                     # one CSV per table + manifest.json
-frames = snap.to_dataframes()                # or work in pandas
-
-net = group_network(client, 7, max_groups=20)
-net["allies"]                                # [{"source": 7, "target": 8}, ...]
+    net = group_network(client, 7, max_groups=20)
+    net["allies"]                              # [{"source": 7, "target": 8}, ...]
 ```
+
+Responses are Pydantic models with snake_case attributes and Roblox's camelCase
+names as aliases. Fields the models do not declare are kept, so nothing Roblox
+adds is ever dropped, and `to_record()` gives back a plain dict with Roblox's
+keys for export.
 
 ## Install
 
-Requires Python 3.9 or newer.
+Requires Python 3.10 or newer.
 
 ```
 pip install "git+https://github.com/CTEC-MIIS/PyRoblox"
 roblox check
 ```
 
-From a clone: `pip install -e .` then `python -m pytest` (306 tests, no network).
+From a clone: `pip install -e ".[dev]"` then `python -m pytest` (421 tests, no
+network). `import robloxwrapper` still works as a compatibility shim.
 
 ## Rate limits and good behaviour
 
 Roblox limits each endpoint per IP address, from 1 call per minute (username
-history, user search) to 10,000 per minute (role members). PyRoblox reads
-Roblox's rate-limit headers and pauses on its own, retries with backoff, and
-stops with a clear message if Roblox keeps refusing. Please do not run many
-copies in parallel to get around this. See [Responsible use](docs/responsible-use.md).
+history, user search) to 10,000 per minute (role members). pyroblox reads
+Roblox's rate-limit headers and pauses on its own, retries with jittered
+backoff, and stops with a clear message if Roblox keeps refusing. Please do not
+run many copies in parallel to get around this. See
+[Responsible use](docs/responsible-use.md).
 
-## Upgrading from v1
+## Upgrading
 
-The v1 functions `build_dataframes(group_id, cookie)`, `group_edgelist(id)`, and
-`friend_edgelist(id)` still exist with the same signatures and output files.
-Two of the seven v1 CSVs were wrong (see the audit); they are correct now. The old
-`friends`, `groups`, `group_games`, and `user_games` classes live in
-`robloxwrapper.legacy` and emit a deprecation warning.
+- **From PyRoblox 1.x:** `build_dataframes(group_id, cookie)`, `group_edgelist(id)`,
+  and `friend_edgelist(id)` still exist with the same signatures and output
+  files. Two of the seven v1 CSVs were wrong (see the audit); they are correct
+  now. The old `friends`, `groups`, `group_games`, and `user_games` classes live
+  in `robloxwrapper` and emit a deprecation warning.
+- **From the 2.0 pre-release (March 2026):** method names, model names, and
+  `client.<api>` attributes are unchanged; the few differences (single-id
+  `get_info`, eager `PagedList` results, `requests` instead of httpx) are listed
+  in the [Python API guide](docs/python-api.md#migrating).
 
 ## License
 

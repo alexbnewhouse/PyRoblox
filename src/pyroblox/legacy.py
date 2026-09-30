@@ -2,7 +2,7 @@
 
 These wrap the v2 client and return the same raw JSON shapes that v1 returned.
 They emit a :class:`DeprecationWarning`; new code should use
-:class:`~robloxwrapper.RobloxClient` directly.
+:class:`~pyroblox.RobloxClient` directly.
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ import warnings
 from typing import Any, Dict, Optional
 
 from .client import RobloxClient
+from .models.base import to_record, to_records
 
 _default_client: Optional[RobloxClient] = None
 
@@ -30,7 +31,7 @@ def set_default_client(client: Optional[RobloxClient]) -> None:
 
 
 def _warn(old: str, new: str) -> None:
-    warnings.warn(f"robloxwrapper.{old} is deprecated; use {new}",
+    warnings.warn(f"pyroblox.{old} is deprecated; use {new}",
                   DeprecationWarning, stacklevel=3)
 
 
@@ -43,10 +44,10 @@ class friends:
         self.client = client or default_client()
 
     def info(self) -> Dict[str, Any]:
-        return {"data": self.client.friends.friends(self.id)}
+        return {"data": to_records(self.client.friends.get_friends(self.id))}
 
     def user_info(self) -> Dict[str, Any]:
-        return self.client.users.get(self.id)
+        return to_record(self.client.users.get_info(self.id))
 
 
 class groups:
@@ -59,10 +60,10 @@ class groups:
         self.client = client or default_client()
 
     def info(self) -> Dict[str, Any]:
-        return self.client.groups.get(self.id)
+        return to_record(self.client.groups.get_info(self.id))
 
     def _relationships(self, kind: str) -> Dict[str, Any]:
-        rows = getattr(self.client.groups, kind)(self.id)
+        rows = to_records(getattr(self.client.groups, f"get_{kind}")(self.id))
         return {"groupId": self.id, "relationshipType": kind.capitalize(),
                 "totalGroupCount": len(rows), "relatedGroups": list(rows),
                 "nextRowIndex": len(rows)}
@@ -83,7 +84,7 @@ class groups:
         client = self.client
         if cookies and cookies.get(".ROBLOSECURITY") and not client.has_cookie:
             client = RobloxClient(cookies[".ROBLOSECURITY"])
-        return {"data": client.groups.social_links(self.id)}
+        return {"data": to_records(client.groups.get_social_links(self.id))}
 
 
 class group_games:

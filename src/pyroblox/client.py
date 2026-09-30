@@ -4,17 +4,17 @@
 the optional ``.ROBLOSECURITY`` cookie, a per-host rate limiter, retry logic,
 and pagination helpers. The domain APIs hang off it as attributes::
 
-    from robloxwrapper import RobloxClient
+    from pyroblox import RobloxClient
 
     client = RobloxClient()                 # public data only
     client = RobloxClient(cookie="...")     # also unlocks cookie-only endpoints
 
-    client.users.get(261)
-    client.groups.members(7)
-    client.games.get(13058)
+    client.users.get_info(261)
+    client.groups.get_members(7)
+    client.games.get_info(13058)
 
-All methods return the JSON Roblox sends back, as plain ``dict`` / ``list``
-values, so nothing is lost when Roblox adds a field.
+All methods return typed models (see :mod:`pyroblox.models`) that keep every
+field Roblox sends, so nothing is lost when Roblox adds one.
 
 Design notes
 ------------
@@ -33,11 +33,13 @@ Design notes
 from __future__ import annotations
 
 import logging
+import random
 import re
 import threading
 import time
 from functools import cached_property
-from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Tuple
+from typing import (Any, Callable, Dict, Generic, Iterable, Iterator, List, Optional,
+                    Tuple, Type, TypeVar)
 from urllib.parse import urlsplit
 
 import requests
@@ -52,23 +54,36 @@ from .errors import (
     ServerError,
 )
 
-log = logging.getLogger("robloxwrapper")
+log = logging.getLogger("pyroblox")
 
 MAX_RETRY_AFTER = 120.0
 DEFAULT_USER_AGENT = "PyRoblox/2.0 (+https://github.com/CTEC-MIIS/PyRoblox)"
 DEFAULT_PAGE_SIZE = 100
 
+T = TypeVar("T")
 
-class PagedList(list):
+
+class PagedList(list, Generic[T]):
     """A list of records plus a ``truncated`` flag.
 
     ``truncated`` is True when a ``max_items`` / ``max_pages`` cap stopped
     pagination while Roblox still had more to give.
     """
 
-    def __init__(self, items=(), truncated: bool = False):
+    def __init__(self, items: Iterable[T] = (), truncated: bool = False):
         super().__init__(items)
         self.truncated = truncated
+
+
+def _roblox_errors(resp: Any) -> List[dict]:
+    """Roblox's ``errors`` array from an error body, or an empty list."""
+    try:
+        body = resp.json()
+    except Exception:  # noqa: BLE001
+        return []
+    if isinstance(body, dict) and isinstance(body.get("errors"), list):
+        return [e for e in body["errors"] if isinstance(e, dict)]
+    return []
 
 
 def _is_roblox_host(host: str) -> bool:
@@ -154,14 +169,19 @@ class RobloxClient:
 
     def __init__(self, cookie: Optional[str] = None, *, rate: float = 1.0,
                  burst: float = 5, max_retries: int = 4, timeout: float = 30,
-                 session: Any = None, clock: Callable[[], float] = time.monotonic,
+                 jitter: bool = True, session: Any = None,
+                 clock: Callable[[], float] = time.monotonic,
                  sleep: Callable[[float], None] = time.sleep,
+                 rng: Callable[[], float] = random.random,
                  user_agent: str = DEFAULT_USER_AGENT):
         self._cookie = cookie or None
         self._auth_failed = False
         self._csrf_token: Optional[str] = None
         self._max_retries = max_retries
         self._timeout = timeout
+        self._jitter = jitter
+        self._rng = rng
+        self._owns_session = session is None
         self._session = session or requests.Session()
         self._sleep = sleep
         self._clock = clock
@@ -170,6 +190,19 @@ class RobloxClient:
         # endpoint key -> monotonic time before which Roblox's own headers say
         # the per-endpoint quota is exhausted
         self._not_before: Dict[str, float] = {}
+
+    # -- lifecycle ------------------------------------------------------------
+
+    def __enter__(self) -> "RobloxClient":
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
+
+    def close(self) -> None:
+        """Close the underlying HTTP session (only if this client created it)."""
+        if self._owns_session and hasattr(self._session, "close"):
+            self._session.close()
 
     # -- state ----------------------------------------------------------------
 
@@ -239,16 +272,20 @@ class RobloxClient:
 
             if status == 404:
                 raise NotFoundError("Not found", status=404, url=url,
-                                    roblox_message=_roblox_message(resp))
+                                    roblox_message=_roblox_message(resp),
+                    errors=_roblox_errors(resp))
             if status == 403:
                 raise PrivateError("Forbidden (private or hidden)", status=403, url=url,
-                                   roblox_message=_roblox_message(resp))
+                                   roblox_message=_roblox_message(resp),
+                    errors=_roblox_errors(resp))
             if status == 401:
                 raise AuthRequiredError("Login cookie required", status=401, url=url,
-                                        roblox_message=_roblox_message(resp))
+                                        roblox_message=_roblox_message(resp),
+                    errors=_roblox_errors(resp))
             if status == 400:
                 raise BadRequestError("Bad request", status=400, url=url,
-                                      roblox_message=_roblox_message(resp))
+                                      roblox_message=_roblox_message(resp),
+                    errors=_roblox_errors(resp))
             if status == 429 or status >= 500:
                 if attempt == self._max_retries:
                     if status == 429:
@@ -257,6 +294,9 @@ class RobloxClient:
                     raise ServerError(f"Roblox server error {status} after retries",
                                       status=status, url=url)
                 wait = self._retry_wait(resp, backoff)
+                if self._jitter and not resp.headers.get("Retry-After") \
+                        and _header_float(resp, "x-ratelimit-reset") is None:
+                    wait *= 0.5 + self._rng() * 0.5   # spread out retries from many clients
                 log.debug("%s %s -> %s; sleeping %.1fs (attempt %d)",
                           method, url, status, wait, attempt + 1)
                 self._sleep(wait)
@@ -264,7 +304,8 @@ class RobloxClient:
                 continue
             if not resp.ok:
                 raise RobloxError(f"Unexpected HTTP {status}", status=status, url=url,
-                                  roblox_message=_roblox_message(resp))
+                                  roblox_message=_roblox_message(resp),
+                                  errors=_roblox_errors(resp))
             return resp.content if binary else resp.json()
         raise RobloxError(f"retries exhausted: {url}", url=url)  # pragma: no cover
 
@@ -306,11 +347,12 @@ class RobloxClient:
 
     def paginate(self, url: str, params: Optional[dict] = None, *,
                  limit: int = DEFAULT_PAGE_SIZE, max_pages: Optional[int] = None,
-                 max_items: Optional[int] = None,
-                 sort_order: Optional[str] = None) -> Iterator[dict]:
-        """Yield items across Roblox ``nextPageCursor`` pagination.
+                 max_items: Optional[int] = None, sort_order: Optional[str] = None,
+                 model: Optional[Type[Any]] = None) -> Iterator[Any]:
+        """Yield items across Roblox ``nextPageCursor`` pagination, lazily.
 
-        Stops early when ``max_pages`` or ``max_items`` is reached.
+        Stops early when ``max_pages`` or ``max_items`` is reached. With
+        ``model`` each item is validated into that model class.
         """
         base = dict(params or {})
         base["limit"] = limit
@@ -326,7 +368,7 @@ class RobloxClient:
                 page_params["cursor"] = cursor
             data = self.get(url, page_params)
             for item in data.get("data") or []:
-                yield item
+                yield model.model_validate(item) if model is not None else item
                 yielded += 1
                 if max_items is not None and yielded >= max_items:
                     return
@@ -341,12 +383,12 @@ class RobloxClient:
 
     def fetch_all(self, url: str, params: Optional[dict] = None, *,
                   limit: int = DEFAULT_PAGE_SIZE, max_pages: Optional[int] = None,
-                  max_items: Optional[int] = None,
-                  sort_order: Optional[str] = None) -> PagedList:
-        """Like :meth:`paginate` but returns a :class:`PagedList`.
+                  max_items: Optional[int] = None, sort_order: Optional[str] = None,
+                  model: Optional[Type[Any]] = None) -> PagedList:
+        """Like :meth:`paginate` but eager: returns a :class:`PagedList`.
 
         Its ``truncated`` flag is True when a cap stopped the walk while more
-        pages remained.
+        pages remained. With ``model`` each item is validated into that class.
         """
         base = dict(params or {})
         base["limit"] = limit
@@ -362,6 +404,8 @@ class RobloxClient:
                 page_params["cursor"] = cursor
             data = self.get(url, page_params)
             page_items = data.get("data") or []
+            if model is not None:
+                page_items = [model.model_validate(i) for i in page_items]
             items.extend(page_items)
             cursor = data.get("nextPageCursor")
             pages += 1
@@ -379,10 +423,12 @@ class RobloxClient:
 
     def fetch_rows(self, url: str, params: Optional[dict] = None, *,
                    key: str = "relatedGroups", page_size: int = DEFAULT_PAGE_SIZE,
-                   max_items: Optional[int] = None) -> PagedList:
+                   max_items: Optional[int] = None,
+                   model: Optional[Type[Any]] = None) -> PagedList:
         """Walk the ``model.startRowIndex`` / ``nextRowIndex`` pagination style.
 
         Used by the group allies/enemies endpoints. Returns a :class:`PagedList`.
+        With ``model`` each row is validated into that class.
         """
         base = dict(params or {})
         items: List[dict] = []
@@ -393,7 +439,7 @@ class RobloxClient:
             page_params["model.maxRows"] = page_size
             data = self.get(url, page_params)
             rows = data.get(key) or []
-            items.extend(rows)
+            items.extend([model.model_validate(r) for r in rows] if model is not None else rows)
             total = data.get("totalGroupCount")
             next_index = data.get("nextRowIndex")
             if max_items is not None and len(items) >= max_items:
@@ -463,9 +509,14 @@ class RobloxClient:
         return ThumbnailsAPI(self)
 
     @cached_property
+    def catalog(self):
+        from .catalog import CatalogAPI
+        return CatalogAPI(self)
+
+    @property
     def assets(self):
-        from .assets import AssetsAPI
-        return AssetsAPI(self)
+        """Alias of :attr:`catalog` (name used by the 2.0 pre-release)."""
+        return self.catalog
 
 
 def chunked(values: Iterable[Any], size: int) -> Iterator[List[Any]]:

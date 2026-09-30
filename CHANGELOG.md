@@ -2,14 +2,26 @@
 
 All notable changes to PyRoblox. The format follows [Keep a Changelog](https://keepachangelog.com/).
 
-## 2.0.0 - 2026-09-28
+## 2.0.0 - 2026-09-30
 
-A rewrite. The import name (`robloxwrapper`) and the three documented v1
-functions are kept; everything else is new. See `docs/AUDIT-2026-09-28.md` for
+Two independent 2.0 rewrites existed by September 2026: a March 2026
+pre-release (`pyroblox` 2.0.0a1: httpx, Pydantic models, no CLI) and a
+September 2026 rewrite (`robloxwrapper`: requests, plain dicts, CLI, docs,
+live-verified endpoints). This release merges them: the `pyroblox` name and
+layout, typed Pydantic models, and `get_*` method names come from the
+pre-release; the client internals, endpoint coverage, collectors, CLI, docs,
+and test harness come from the September rewrite. `import robloxwrapper` is a
+shim over `pyroblox`. See `docs/python-api.md` for both migration tables.
+
+A rewrite. The three documented v1 functions are kept and `import robloxwrapper`
+still works as a compatibility shim; everything else is new. See `docs/AUDIT-2026-09-28.md` for
 the audit that motivated it.
 
 ### Added
 
+- Typed Pydantic v2 models for every response (`pyroblox.models`): camelCase
+  aliases, `extra="allow"` so new Roblox fields are never dropped, `to_record()`
+  for JSON-compatible dicts with Roblox's key names.
 - `RobloxClient`, one object that owns the HTTP session, the optional
   `.ROBLOSECURITY` cookie, a per-host rate limiter, retries with backoff, and
   pagination helpers (`paginate`, `fetch_all`, `fetch_rows`). It reads Roblox's
@@ -45,7 +57,7 @@ the audit that motivated it.
   badge, and bundle links, plus `type:id` shorthand.
 - Configuration via flags, `ROBLOX_*` environment variables, or a YAML/JSON file
   (`RobloxConfig`, `load_config`), including `cookie_file`.
-- `robloxwrapper.legacy` with the v1 classes `friends`, `groups`, `group_games`,
+- `pyroblox.legacy` with the v1 classes `friends`, `groups`, `group_games`,
   `user_games` as deprecated shims.
 - Tests: 306 unit tests with a fake HTTP session; no network needed.
 - Documentation: getting-started guide for non-programmers, CLI reference, data
@@ -54,8 +66,8 @@ the audit that motivated it.
 
 ### Changed
 
-- Public API. `from robloxwrapper import RobloxClient` replaces the module-level
-  `sess` and the `friends(id)` / `groups(id)` classes.
+- Public API. `from pyroblox import RobloxClient` replaces the module-level
+  `sess` and the `friends(id)` / `groups(id)` classes of the old `robloxwrapper` package.
 - Methods return Roblox's JSON as plain dicts and lists. No dataclasses pin
   field names, so a field Roblox adds or renames no longer breaks collection.
 - Config keys are flat and identical everywhere (`cookie`, `cookie_file`,
@@ -67,7 +79,7 @@ the audit that motivated it.
   an `output_dir`, and returns the DataFrames; it still writes the seven v1 file
   names. `friend_edgelist()` and `group_edgelist()` keep their shapes.
 - Packaging moved to `pyproject.toml`; distribution `PyRoblox`, import
-  `robloxwrapper`, console script `roblox`. Runtime dependencies: `requests`,
+  `pyroblox`, console script `roblox`. Runtime dependencies: `requests`,
   `click`, `pandas`, `pyyaml`, `networkx`. Python 3.9 or newer.
 - Group profiles in `group_network` come from the relationship responses and the
   batch endpoint; the single-group GET (7 calls per minute) is used only for the

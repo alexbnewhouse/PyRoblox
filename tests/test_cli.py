@@ -8,8 +8,8 @@ import pandas as pd
 import pytest
 from click.testing import CliRunner
 
-from robloxwrapper import __version__
-from robloxwrapper.cli import cli
+from pyroblox import __version__
+from pyroblox.cli import cli
 from tests.conftest import FakeResponse, make_client, page
 
 U = "https://users.roblox.com/v1"
@@ -147,11 +147,11 @@ def test_user_simple_commands(runner, tmp_path):
         f"GET {F}/users/261/friends/count": {"count": 2},
         f"GET {F}/users/261/followers/count": {"count": 3},
         f"GET {F}/users/261/followings/count": {"count": 4},
-        f"GET {G}/users/261/groups/roles": {"data": [{"group": {"id": 7, "name": "R"}, "role": {"name": "Member"}}]},
-        f"GET {GM}/v2/users/261/games": page([{"id": 1}]),
-        f"GET {GM}/v2/users/261/favorite/games": page([{"id": 2}]),
+        f"GET {G}/users/261/groups/roles": {"data": [{"group": {"id": 7, "name": "R"}, "role": {"id": 1, "name": "Member"}}]},
+        f"GET {GM}/v2/users/261/games": page([{"id": 1, "name": "G1"}]),
+        f"GET {GM}/v2/users/261/favorite/games": page([{"id": 2, "name": "G2"}]),
         f"GET {U}/users/261/username-history": page([{"name": "old"}]),
-        "GET https://avatar.roblox.com/v1/users/261/avatar": {"playerAvatarType": "R15", "assets": [{"id": 9, "name": "Hat"}]},
+        "GET https://avatar.roblox.com/v1/users/261/avatar": {"playerAvatarType": "R15", "assets": [{"id": 9, "name": "Hat", "assetType": {"id": 8, "name": "Hat"}}]},
         "GET https://accountinformation.roblox.com/v1/users/261/promotion-channels": {"twitter": "shed", "youtube": None},
         "POST https://presence.roblox.com/v1/presence/users": {"userPresences": [{"userPresenceType": 2, "userId": 261}]},
     })
@@ -238,11 +238,11 @@ def test_group_commands(runner, tmp_path):
             "relatedGroups": [{"id": 8, "name": "Ally"}], "nextRowIndex": 1}
     client, _, _ = make_client(routes={
         f"GET {G}/groups/7": group_profile(),
-        f"GET {G}/groups/7/users": page([{"user": {"userId": 1, "username": "a"}, "role": {"name": "Member"}}]),
+        f"GET {G}/groups/7/users": page([{"user": {"userId": 1, "username": "a"}, "role": {"id": 1, "name": "Member"}}]),
         f"GET {G}/groups/7/roles": {"roles": [{"id": 1, "name": "Member", "rank": 1}]},
         f"GET {G}/groups/7/relationships/allies": rows,
         f"GET {G}/groups/7/relationships/enemies": dict(rows, relatedGroups=[], totalGroupCount=0),
-        f"GET {GM}/v2/groups/7/gamesV2": page([{"id": 3}]),
+        f"GET {GM}/v2/groups/7/gamesV2": page([{"id": 3, "name": "G3"}]),
         f"GET {G}/groups/7/name-history": page([]),
         f"GET {G}/groups/7/social-links": FakeResponse(401),
     })
@@ -280,8 +280,8 @@ def test_group_network_command(runner, tmp_path):
         f"GET {G}/groups/7/relationships/enemies": empty,
         f"GET {G}/groups/8/relationships/allies": empty,
         f"GET {G}/groups/8/relationships/enemies": empty,
-        f"GET {G}/groups/7/users": page([{"user": {"userId": 1, "username": "a"}, "role": {"name": "M"}}]),
-        f"GET {G}/groups/8/users": page([{"user": {"userId": 2, "username": "b"}, "role": {"name": "M"}}]),
+        f"GET {G}/groups/7/users": page([{"user": {"userId": 1, "username": "a"}, "role": {"id": 1, "name": "M"}}]),
+        f"GET {G}/groups/8/users": page([{"user": {"userId": 2, "username": "b"}, "role": {"id": 1, "name": "M"}}]),
     })
     result = run(runner, client, ["group", "network", "7", "--graphml"], tmp_path)
     assert result.exit_code == 0, result.output
@@ -303,7 +303,7 @@ def test_game_commands(runner, tmp_path):
         f"GET {GM}/v1/games/votes": {"data": [{"id": 13058, "upVotes": 1, "downVotes": 0}]},
         f"GET {GM}/v1/games/13058/favorites/count": {"favoritesCount": 3},
         f"GET {GM}/v1/games/1818/servers/Public": page([{"id": "s", "playing": 1}]),
-        "GET https://badges.roblox.com/v1/universes/13058/badges": page([{"id": 1}]),
+        "GET https://badges.roblox.com/v1/universes/13058/badges": page([{"id": 1, "name": "Winner"}]),
         "GET https://apis.roblox.com/game-passes/v1/universes/13058/game-passes": {"gamePasses": []},
         "GET https://develop.roblox.com/v1/universes/13058/places": page([{"id": 1818}]),
         f"GET {GM}/v2/games/13058/media": {"data": []},

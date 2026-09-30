@@ -1,6 +1,6 @@
 import pytest
 
-from robloxwrapper.urls import looks_like_id, parse_roblox_url
+from pyroblox.urls import looks_like_id, parse_roblox_url
 
 
 @pytest.mark.parametrize("raw,expected", [

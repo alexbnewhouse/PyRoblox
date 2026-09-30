@@ -3,7 +3,7 @@ import json
 import pandas as pd
 import pytest
 
-from robloxwrapper.export import (
+from pyroblox.export import (
     Snapshot, edgelist_to_graphml, edges_to_dataframe, flatten, to_dataframe,
     write_records,
 )
@@ -104,3 +104,21 @@ def test_edgelist_to_graphml(tmp_path):
     assert set(g.nodes) == {"1", "2", "3"}
     assert g.edges["2", "3"]["kind"] == "ally"
     assert g.nodes["1"]["tags"] == "[1, 2]"
+
+
+def test_models_are_accepted_everywhere(tmp_path):
+    from pyroblox.models.base import RobloxModel
+
+    class M(RobloxModel):
+        id: int
+        display_name: str = ""
+
+    m = M(id=1, display_name="A")
+    assert list(to_dataframe([m]).columns) == ["id", "displayName"]
+    p = write_records([m], tmp_path / "m.csv")
+    assert pd.read_csv(p).iloc[0]["displayName"] == "A"
+    snap = Snapshot("user", 1)
+    snap.add("profile", m)
+    snap.add("rows", [m, {"id": 2, "displayName": "B"}])
+    assert snap["profile"] == [{"id": 1, "displayName": "A"}]
+    assert snap["rows"][1] == {"id": 2, "displayName": "B"}

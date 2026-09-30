@@ -22,7 +22,7 @@ Two consequences:
 - Ids are integers and can be up to 16 digits. Spreadsheet programs may show
   them in scientific notation or round them; import id columns as text.
 
-Timestamps are ISO 8601 in UTC, for example `2006-06-22T01:33:56.45Z`.
+Timestamps are ISO 8601 in UTC. Values pass through typed models before export, so fractional seconds are written with six digits (`2006-06-22T01:33:56.450000Z`) even when Roblox sent fewer; the instant is unchanged. Only fields Roblox actually sent become columns.
 
 ## Manifest
 

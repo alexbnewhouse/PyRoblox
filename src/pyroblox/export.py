@@ -20,6 +20,8 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 import pandas as pd
 
+from .models.base import to_record
+
 RecordList = List[Dict[str, Any]]
 
 
@@ -47,20 +49,20 @@ def flatten(record: Mapping[str, Any], sep: str = "_", prefix: str = "") -> Dict
     return out
 
 
-def to_dataframe(records: Iterable[Mapping[str, Any]], sep: str = "_") -> pd.DataFrame:
-    """Build a DataFrame with one flattened row per record."""
-    rows = [flatten(r, sep=sep) for r in records]
+def to_dataframe(records: Iterable[Any], sep: str = "_") -> pd.DataFrame:
+    """Build a DataFrame with one flattened row per record (dicts or models)."""
+    rows = [flatten(to_record(r), sep=sep) for r in records]
     if not rows:
         return pd.DataFrame()
     return pd.DataFrame(rows)
 
 
-def write_records(records: Iterable[Mapping[str, Any]], path: Union[str, Path],
+def write_records(records: Iterable[Any], path: Union[str, Path],
                   fmt: str = "csv") -> Path:
-    """Write records as CSV (flattened) or JSON (as-is). Returns the path written."""
+    """Write records (dicts or models) as CSV (flattened) or JSON. Returns the path."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    records = list(records)
+    records = [to_record(r) for r in records]
     if fmt == "csv":
         to_dataframe(records).to_csv(path, index=False)
     elif fmt == "json":
@@ -99,8 +101,9 @@ class Snapshot:
 
     # -- building -------------------------------------------------------------
 
-    def add(self, name: str, records: Union[RecordList, Mapping[str, Any], None]) -> None:
-        """Add a table. A single dict becomes a one-row table."""
+    def add(self, name: str, records: Any) -> None:
+        """Add a table of dicts or models. A single dict/model becomes a one-row table."""
+        records = to_record(records)
         if records is None:
             records = []
         elif isinstance(records, Mapping):
