@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.eggs/
+*.orig
+*.rej
+
+# Environments
+.venv/
+venv/
+env/
+.env
+
+# Tooling
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Editors / OS
+.DS_Store
+.Rhistory
+.idea/
+.vscode/
+*.swp
+
+# Secrets and data outputs
+roblox_cookie.txt
+*.cookie
+roblox_data/
+output/

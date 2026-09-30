@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "PyRoblox"
+version = "2.0.0"
+description = "Pull public Roblox data (users, friends, groups, games, badges, avatars) into CSV files or pandas DataFrames for safety research."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.9"
+authors = [
+  { name = "Center on Terrorism, Extremism, and Counterterrorism (CTEC)" },
+]
+keywords = ["roblox", "api", "research", "trust-and-safety", "osint", "network-analysis"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Topic :: Internet :: WWW/HTTP",
+  "Topic :: Scientific/Engineering :: Information Analysis",
+]
+dependencies = [
+  "requests>=2.28",
+  "click>=8.0",
+  "pandas>=1.5",
+  "pyyaml>=6.0",
+  "networkx>=2.8",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+
+[project.urls]
+Homepage = "https://github.com/CTEC-MIIS/PyRoblox"
+Issues = "https://github.com/CTEC-MIIS/PyRoblox/issues"
+
+[project.scripts]
+roblox = "robloxwrapper.cli:main"
+
+[tool.setuptools]
+packages = ["robloxwrapper"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+markers = [
+  "live: tests that call the real Roblox API (set ROBLOX_LIVE_TESTS=1 to run)",
+]
